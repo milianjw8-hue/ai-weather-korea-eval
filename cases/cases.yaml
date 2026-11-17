@@ -1,0 +1,46 @@
+# Korean high-impact weather cases.
+# init_times: UTC initial conditions; hours: forecast length.
+# first_guess: approximate typhoon centre (lat, lon) at the FIRST valid time used for tracking.
+#   These are rough starting points only; the tracker searches within search_km.
+#   Check positions against IBTrACS or the KMA typhoon best track before reporting results.
+
+khanun_2023:
+  description: Typhoon Khanun (2306) crossing the Korean Peninsula, landfall around 10 Aug 2023
+  init_times: ["2023-08-07T00:00", "2023-08-08T00:00"]
+  hours: 96
+  region: korea_wide
+  track: true
+  first_guess: [29.0, 130.0]
+  search_km: 500
+
+hinnamnor_2022:
+  description: Typhoon Hinnamnor (2211) landfall near Geoje on 6 Sep 2022
+  init_times: ["2022-09-03T00:00", "2022-09-04T00:00"]
+  hours: 96
+  region: korea_wide
+  track: true
+  first_guess: [25.0, 125.0]
+  search_km: 500
+
+seoul_rain_2022:
+  description: Central-region heavy rainfall, 8 Aug 2022 (large-scale fields only; precipitation not evaluated)
+  init_times: ["2022-08-06T00:00", "2022-08-07T00:00"]
+  hours: 72
+  region: korea
+  track: false
+
+jeju_wind_2025:
+  description: Strong-wind case around Jeju, 11-12 Apr 2025
+  init_times: ["2025-04-09T00:00", "2025-04-10T00:00"]
+  hours: 72
+  region: korea
+  track: false
+
+synthetic_typhoon:
+  description: SYNTHETIC test case created by scripts/make_synthetic_case.py (not real data)
+  init_times: ["2030-08-01T00:00"]
+  hours: 96
+  region: korea_wide
+  track: true
+  first_guess: [25.0, 126.0]
+  search_km: 500

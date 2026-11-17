@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kwxeval"
+version = "0.1.0"
+description = "Evaluate open AI weather prediction models (FourCastNet, SFNO, Pangu-Weather, GraphCast) on Korean high-impact weather cases"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Joo Wan Cha" }]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "pandas>=2.0", "xarray>=2023.1", "netCDF4>=1.6", "scipy>=1.10", "matplotlib>=3.7", "pyyaml>=6.0"]
+keywords = ["AI weather prediction", "Earth2Studio", "verification", "typhoon", "Korea", "ERA5"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+
+[project.optional-dependencies]
+run = ["earth2studio>=0.20"]
+maps = ["cartopy>=0.22"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+kwxeval = "kwxeval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,91 @@
+# ai-weather-korea-eval (kwxeval)
+
+공개 AI 기상예측모델(FourCastNet, SFNO, Pangu-Weather, GraphCast)을 **한반도 위험기상 사례**에 돌리고,
+ERA5 분석장과 비교해 성능을 평가하는 도구입니다.
+모델 실행은 NVIDIA [Earth2Studio](https://github.com/NVIDIA/earth2studio)를 쓰고, 초기장과 정답은 공개 ARCO ERA5에서 받습니다.
+
+*English summary below.*
+
+## 무엇을 평가하나
+
+| 항목 | 지표 |
+|---|---|
+| 격자 검증 (msl, u10m, v10m, t2m, z500) | 면적 가중(cos 위도) RMSE, 편차, MAE, 패턴 상관계수를 예측 시간별로 계산 |
+| 기준 예측 | 지속 예측(persistence)을 함께 계산해 모델의 실제 기술을 확인 |
+| 태풍 진로 | 해면기압 최저점 추적, 진로 오차(km), 중심기압 오차, 중심 300 km 안 최대 풍속 |
+
+## 사례
+
+`cases/cases.yaml`에 들어 있습니다. 직접 추가할 수 있습니다.
+
+| 이름 | 내용 |
+|---|---|
+| `khanun_2023` | 태풍 카눈(2306). 2023년 8월 10일 거제 부근 상륙 후 한반도 종단 |
+| `hinnamnor_2022` | 태풍 힌남노(2211). 2022년 9월 6일 거제 부근 상륙 |
+| `seoul_rain_2022` | 2022년 8월 8일 중부지방 집중호우 (대규모 장만 평가, 강수는 제외) |
+| `jeju_wind_2025` | 2025년 4월 11~12일 제주 강풍 |
+| `synthetic_typhoon` | GPU 없이 시험하는 합성 사례 (가짜 자료) |
+
+태풍 사례의 `first_guess`는 추적 시작점을 대략 적은 값입니다. 결과를 보고하기 전에 IBTrACS나 기상청 태풍 최적경로와 대조하세요.
+
+## 설치와 실행
+
+```bash
+git clone https://github.com/milianjw8-hue/ai-weather-korea-eval.git
+cd ai-weather-korea-eval
+pip install -e ".[run]"        # 모델 실행까지 (GPU 필요)
+# pip install -e ".[dev]"     # 검증만 (CPU)
+```
+
+```bash
+kwxeval run    --case khanun_2023 --models fcn pangu6 --out runs   # GPU, 인터넷
+kwxeval truth  --case khanun_2023 --out runs                       # ERA5 정답 (인터넷)
+kwxeval verify --case khanun_2023 --runs runs --out results --persistence
+```
+
+노트북으로 하려면 `notebooks/run_case.ipynb`를 Colab이나 GPU 서버에서 엽니다.
+
+### GPU 없이 시험
+
+```bash
+pip install -e ".[dev]"
+python scripts/make_synthetic_case.py --out runs
+kwxeval verify --case synthetic_typhoon --runs runs --out results --persistence
+pytest
+```
+
+### 결과 파일 (`results/<case>/`)
+
+| 파일 | 내용 |
+|---|---|
+| `grid_scores.csv` | 모델·초기시각·예측시간·변수별 RMSE, 편차, MAE, 패턴 상관 |
+| `rmse_vs_lead.png`, `pattern_corr_vs_lead.png` | 예측 시간별 점수 그림 |
+| `track_*.csv`, `tracks_*.png`, `track_error_*.png` | 태풍 진로, 진로 오차 |
+
+## 주의할 점
+
+- **GPU 메모리:** Earth2Studio는 대부분 모델에 약 40 GB를 권장합니다. 16 GB급 GPU에서는 실패할 수 있습니다.
+- **모델 라이선스:** 모델 가중치마다 사용 조건이 다릅니다(예: GraphCast 가중치는 비상업 조건). 결과를 공개하기 전에 각 모델의 라이선스를 확인하세요.
+- **정답 자료의 한계:** ERA5로 초기화하고 ERA5로 검증하므로 분석장 자체의 오차는 평가하지 못합니다. 지상 관측 검증은 자매 저장소 [ai-downscale-verify](https://github.com/milianjw8-hue/ai-downscale-verify)를 쓰세요.
+- **해상도:** 서로 다른 격자(0.25°, 1°)를 비교할 때는 가장 거친 격자로 맞춘 뒤 점수를 냅니다.
+- **진로 추적:** 해면기압 최저점만 따라가는 단순 방식입니다. 약한 저기압이나 상륙 후 쇠약 단계에서는 잘못 잡을 수 있습니다.
+- 이 저장소에는 코드와 합성 자료만 있습니다. 실행 결과(NetCDF)는 커밋하지 않습니다.
+
+## 방법
+
+지표 정의는 [`docs/METHODS.md`](docs/METHODS.md)에 있습니다.
+
+## 라이선스
+
+이 저장소의 코드는 MIT 라이선스입니다. Earth2Studio와 각 모델 가중치는 각자의 라이선스를 따릅니다.
+
+---
+
+## English summary
+
+`kwxeval` runs open AI weather models (FourCastNet, SFNO, Pangu-Weather, GraphCast-small) through
+NVIDIA Earth2Studio from ARCO ERA5 initial conditions for Korean high-impact cases (typhoons
+Khanun 2023 and Hinnamnor 2022, heavy rain, strong wind), and verifies them against ERA5 with
+area-weighted RMSE, bias, MAE and pattern correlation by lead time, a persistence baseline,
+and an MSLP-minimum typhoon tracker with track and central-pressure errors. A synthetic case
+lets the verification run without a GPU.
