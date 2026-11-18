@@ -46,6 +46,15 @@ IFS 분석을 검증 기준으로 쓰는 것도 같은 이유로 2024-03 이후 
 
 H100 80 GB 한 장이면 모두 돌릴 수 있습니다(추정, 앙상블 구성원 수와 배치 크기에 따라 다름).
 
+## 전체 실행 계획 한 번에 만들기
+
+```bash
+kwxeval plan --gpu-gb 80 --ic-file khanun_2023=ic/kim_khanun.nc --out run_matrix.sh
+bash run_matrix.sh
+```
+
+`kwxeval plan`은 사례마다 쓸 수 있는 초기장만 골라 명령을 씁니다. 자료 기간 밖이거나 GPU 메모리가 모자라 뺀 조합은 화면과 `run_matrix.csv`에 이유와 함께 남깁니다.
+
 ## 실행 순서 (예: 카눈)
 
 ```bash
@@ -64,8 +73,8 @@ ds = xr.open_mfdataset("kim_analysis_*.nc")           # 전구 위경도 격자�
 prepare_ic_file(ds, "ic/kim_khanun.nc", rename={...})  # KIM 이름 -> Earth2Studio 이름
 EOF
 kwxeval ic-check ic/kim_khanun.nc --case khanun_2023 --variables msl u10m v10m t2m z500
-kwxeval run --case khanun_2023 --models pangu6 --ic file --ic-path ic/kim_khanun.nc --out runs
-#   (실행 결과 파일 이름은 pangu6@file.nc. 필요하면 pangu6@kim.nc로 바꿔 저장)
+kwxeval run --case khanun_2023 --models pangu6 --ic file --ic-path ic/kim_khanun.nc --ic-name kim --out runs
+#   -> runs/khanun_2023/pangu6@kim.nc
 
 # 4) 검증
 kwxeval truth  --case khanun_2023 --out runs

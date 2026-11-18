@@ -2,6 +2,9 @@
 
 ## 0.4.0 (2026-11-18)
 
+- `kwxeval plan`: run matrix as a shell script, skipping combinations outside the archives or GPU memory
+- `run --ic-name` to label file-based initial conditions (e.g. `pangu6@kim`)
+
 - Initial conditions: `kwxeval run --ic era5|gfs|ifs|file --ic-path`; output named `<model>@<ic>.nc`
   (ERA5 runs keep the bare name). Archive limits checked before download (IFS open data from 2024-03-01,
   GFS from 2021-01-01, including the -6 h state)

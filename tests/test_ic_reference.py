@@ -128,3 +128,24 @@ def test_verify_with_ic_variant_and_second_reference(tmp_path):
 def test_cli_models(capsys):
     main(["models"])
     assert "fcn3" in capsys.readouterr().out
+
+
+def test_plan_skips_unavailable(tmp_path):
+    import yaml
+
+    from kwxeval.plan import build_plan
+
+    cases = yaml.safe_load((ROOT / "cases" / "cases.yaml").read_text(encoding="utf-8"))
+    lines, t = build_plan(cases, ["khanun_2023", "jeju_wind_2025"], ["pangu6", "fcn3"],
+                          ic_files={"khanun_2023": "ic/kim.nc"}, max_gpu_gb=48)
+    run = t[t.status == "run"]
+    assert not ((run.case == "khanun_2023") & (run.ic == "ifs")).any()
+    assert ((run.case == "jeju_wind_2025") & (run.ic == "ifs")).any()
+    assert "fcn3" not in set(run.model)
+    assert "pangu6@kim" in set(run.label)
+    text = "\n".join(lines)
+    assert "--ic-name kim" in text
+    assert "kwxeval verify --case jeju_wind_2025 --runs runs --out results --truth ifs" in text
+    assert "--case khanun_2023 --runs runs --out results --truth ifs" not in text
+    main(["plan", "--case", "khanun_2023", "--models", "pangu6", "--out", str(tmp_path / "m.sh")])
+    assert (tmp_path / "m.sh").read_text().startswith("#!/usr/bin/env bash")

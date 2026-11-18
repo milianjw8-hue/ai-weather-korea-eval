@@ -5,6 +5,7 @@
   kwxeval run    --case jeju_wind_2025 --models aifs_ens --ic ifs --members 8
   kwxeval truth  --case khanun_2023 --out runs/ [--source ifs]          (internet)
   kwxeval verify --case khanun_2023 --runs runs/ --out results/ [--truth ifs]   (CPU)
+  kwxeval plan   --gpu-gb 80 --out run_matrix.sh                       write the full run matrix
   kwxeval ic-check kim_ic.nc --case jeju_wind_2025 --variables msl u10m ...
 """
 
@@ -66,7 +67,7 @@ def cmd_run(args):
     case = load_case(args.case, args.cases)
     check_ic_times(args.ic, case["init_times"])  # before any download
     for m in args.models:
-        out = Path(args.out) / case["name"] / f"{forecast_label(m, args.ic)}.nc"
+        out = Path(args.out) / case["name"] / f"{forecast_label(m, args.ic_name or args.ic)}.nc"
         run_forecast(m, case["init_times"], case["hours"], case["region_obj"], out, device=args.device,
                      ic=args.ic, ic_path=args.ic_path, members=args.members)
         print(f"saved {out}")
@@ -79,6 +80,26 @@ def cmd_truth(args):
     out = truth_file(Path(args.out) / case["name"], args.source)
     fetch_truth(valid_times(case), case["region_obj"], out, source=args.source)
     print(f"saved {out}")
+
+
+def cmd_plan(args):
+    import yaml as _yaml
+
+    from .plan import build_plan, write_plan
+
+    cases = _yaml.safe_load(Path(args.cases or ROOT_CASES).read_text(encoding="utf-8"))
+    names = args.case or [c for c in cases if not c.startswith("synthetic")]
+    ic_files = dict(x.split("=", 1) for x in (args.ic_file or []))
+    lines, table = build_plan(cases, names, args.models, tuple(args.ics), args.members, ic_files,
+                              max_gpu_gb=args.gpu_gb)
+    write_plan(lines, args.out)
+    table.to_csv(Path(args.out).with_suffix(".csv"), index=False)
+    n_run = int((table.status == "run").sum())
+    print(f"{n_run} runs planned, {len(table) - n_run} skipped -> {args.out}")
+    skipped = table[table.status == "skip"]
+    for (reason,), g in skipped.groupby(["reason"]):
+        what = ", ".join(sorted(set(g["model"]))) if "GPU" in reason else ", ".join(sorted(set(g["case"])))
+        print(f"  skip ({reason}): {what}")
 
 
 def cmd_ic_check(args):
@@ -278,6 +299,7 @@ def main(argv=None):
                    help="initial conditions (ifs: from 2024-03-01, gfs: from 2021-01-01)")
     r.add_argument("--ic-path", help="NetCDF from kwxeval.icfile.prepare_ic_file (with --ic file)")
     r.add_argument("--members", type=int, default=1, help="members for stochastic (ens) models")
+    r.add_argument("--ic-name", help="label used in the file name instead of the ic source, e.g. kim")
     r.set_defaults(func=cmd_run)
     ms = sub.add_parser("models", help="list registered models")
     ms.set_defaults(func=cmd_models)
@@ -286,6 +308,16 @@ def main(argv=None):
     t.add_argument("--out", default="runs")
     t.add_argument("--source", default="era5", choices=["era5", "ifs"])
     t.set_defaults(func=cmd_truth)
+    pl = sub.add_parser("plan", help="write the run matrix as a shell script for the GPU machine")
+    pl.add_argument("--case", nargs="+", help="cases (default: all non-synthetic)")
+    pl.add_argument("--models", nargs="+", help="models (default: kwxeval.plan.DEFAULT_MODELS)")
+    pl.add_argument("--ics", nargs="+", default=["era5", "gfs", "ifs"])
+    pl.add_argument("--ic-file", nargs="+", metavar="CASE=PATH",
+                    help="prepared KIM initial-condition files; runs are labelled model@kim")
+    pl.add_argument("--members", type=int, default=8)
+    pl.add_argument("--gpu-gb", type=int, default=80, help="GPU memory; larger models are skipped")
+    pl.add_argument("--out", default="run_matrix.sh")
+    pl.set_defaults(func=cmd_plan)
     ic = sub.add_parser("ic-check", help="check an initial-condition file made with kwxeval.icfile")
     ic.add_argument("path")
     ic.add_argument("--case")
