@@ -90,9 +90,14 @@ def track_errors(fc_track: pd.DataFrame, ref_track: pd.DataFrame) -> pd.DataFram
     cross_track_km > 0: forecast centre to the RIGHT of the reference motion.
     msl_error is in the input unit (Pa for ERA5/model fields and best tracks read by kwxeval);
     msl_error_hpa is the same in hPa. wind_error compares maximum wind (m/s) when both exist.
+    speed_error_kmh: forecast minus reference translation speed (> 0: forecast storm moves too fast).
     """
     ref = ref_track.merge(reference_motion(ref_track), on="time")
-    m = fc_track.merge(ref, on="time", suffixes=("_fc", "_ref"))
+    fc = fc_track.dropna(subset=["lat", "lon"])
+    fc_speed = reference_motion(fc)[["time", "speed_kmh"]].rename(columns={"speed_kmh": "speed_kmh_fc"})
+    fc = fc.merge(fc_speed, on="time", how="left")
+    m = fc.merge(ref, on="time", suffixes=("_fc", "_ref"))
+    m["speed_error_kmh"] = m["speed_kmh_fc"] - m["speed_kmh"]
     m["position_error_km"] = great_circle_km(m["lat_fc"], m["lon_fc"], m["lat_ref"], m["lon_ref"])
     # local tangent plane at the reference fix
     dx = np.deg2rad(m["lon_fc"] - m["lon_ref"]) * EARTH_RADIUS_KM * np.cos(np.deg2rad(m["lat_ref"]))
@@ -111,7 +116,8 @@ def summarize_track_errors(err_tables: dict[str, pd.DataFrame], init_time) -> pd
     """One row per model and lead time with the error components."""
     t0 = pd.Timestamp(init_time)
     rows = []
-    cols = ["position_error_km", "along_track_km", "cross_track_km", "msl_error_hpa", "wind_error"]
+    cols = ["position_error_km", "along_track_km", "cross_track_km", "speed_error_kmh", "msl_error_hpa",
+            "wind_error"]
     for name, e in err_tables.items():
         x = e.copy()
         x["lead_h"] = (pd.to_datetime(x["time"]) - t0) / np.timedelta64(1, "h")
@@ -120,6 +126,35 @@ def summarize_track_errors(err_tables: dict[str, pd.DataFrame], init_time) -> pd
         x.insert(1, "init_time", t0)
         rows.append(x)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
+LEAD_BINS = (0, 24, 48, 72, 120, 240)
+
+
+def track_bias(summary: pd.DataFrame, lead_bins=LEAD_BINS) -> pd.DataFrame:
+    """Signed (systematic) track and intensity errors per model and lead-time window.
+
+    along_track_km      mean > 0: storms run ahead (too fast); < 0: too slow
+    frac_ahead          share of fixes where the forecast is ahead of the reference
+    speed_error_kmh     mean forecast-minus-reference translation speed
+    cross_track_km      mean > 0: forecast to the right of the reference motion
+    msl_error_hpa       mean > 0: central pressure too high (storm too weak)
+    wind_error          mean < 0: maximum wind too weak
+    Lead 0 is excluded (it measures the analysis, not the forecast).
+    """
+    x = summary[summary["lead_h"] > 0].copy()
+    if x.empty:
+        return pd.DataFrame()
+    x["lead_window"] = pd.cut(x["lead_h"], bins=list(lead_bins), right=True,
+                              labels=[f"{a + 1 if a else 1}-{b}h" for a, b in zip(lead_bins[:-1], lead_bins[1:])])
+    x["ahead"] = (x["along_track_km"] > 0).astype(float)
+    agg = {"n": ("lead_h", "size"), "along_track_km": ("along_track_km", "mean"), "frac_ahead": ("ahead", "mean"),
+           "cross_track_km": ("cross_track_km", "mean")}
+    for c in ("speed_error_kmh", "msl_error_hpa", "wind_error"):
+        if c in x:
+            agg[c] = (c, "mean")
+    out = x.groupby(["model", "lead_window"], observed=True).agg(**agg).reset_index()
+    return out.round(2)
 
 
 def ensemble_mean_track(member_tracks: pd.DataFrame) -> pd.DataFrame:

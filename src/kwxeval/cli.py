@@ -1,8 +1,11 @@
 """Command line interface.
 
+  kwxeval models                                                        list models and GPU memory
   kwxeval run    --case khanun_2023 --models fcn pangu6 --out runs/     (GPU, internet)
-  kwxeval truth  --case khanun_2023 --out runs/                         (internet)
-  kwxeval verify --case khanun_2023 --runs runs/ --out results/         (CPU)
+  kwxeval run    --case jeju_wind_2025 --models aifs_ens --ic ifs --members 8
+  kwxeval truth  --case khanun_2023 --out runs/ [--source ifs]          (internet)
+  kwxeval verify --case khanun_2023 --runs runs/ --out results/ [--truth ifs]   (CPU)
+  kwxeval ic-check kim_ic.nc --case jeju_wind_2025 --variables msl u10m ...
 """
 
 from __future__ import annotations
@@ -19,7 +22,8 @@ import yaml
 from . import plots
 from .regions import REGIONS
 from .besttrack import load_best_track
-from .track import ensemble_mean_track, forecast_to_valid_time, summarize_track_errors, track_errors, track_minimum
+from .track import (ensemble_mean_track, forecast_to_valid_time, summarize_track_errors, track_bias, track_errors,
+                    track_minimum)
 from .spectra import spectra_table
 from .verify import ENSEMBLE_DIM, common_grid, grid_scores, persistence, standardize, to_grid
 
@@ -42,13 +46,29 @@ def valid_times(case) -> list[pd.Timestamp]:
     return sorted(t)
 
 
+def truth_file(rundir: Path, source: str) -> Path:
+    return rundir / ("era5.nc" if source == "era5" else f"truth_{source}.nc")
+
+
+def is_truth_file(p: Path) -> bool:
+    return p.stem == "era5" or p.stem.startswith("truth_")
+
+
+def cmd_models(args):
+    from .run import model_table
+
+    print(model_table().to_string(index=False))
+
+
 def cmd_run(args):
-    from .run import run_forecast
+    from .run import check_ic_times, forecast_label, run_forecast
 
     case = load_case(args.case, args.cases)
+    check_ic_times(args.ic, case["init_times"])  # before any download
     for m in args.models:
-        out = Path(args.out) / case["name"] / f"{m}.nc"
-        run_forecast(m, case["init_times"], case["hours"], case["region_obj"], out, device=args.device)
+        out = Path(args.out) / case["name"] / f"{forecast_label(m, args.ic)}.nc"
+        run_forecast(m, case["init_times"], case["hours"], case["region_obj"], out, device=args.device,
+                     ic=args.ic, ic_path=args.ic_path, members=args.members)
         print(f"saved {out}")
 
 
@@ -56,9 +76,20 @@ def cmd_truth(args):
     from .run import fetch_truth
 
     case = load_case(args.case, args.cases)
-    out = Path(args.out) / case["name"] / "era5.nc"
-    fetch_truth(valid_times(case), case["region_obj"], out)
+    out = truth_file(Path(args.out) / case["name"], args.source)
+    fetch_truth(valid_times(case), case["region_obj"], out, source=args.source)
     print(f"saved {out}")
+
+
+def cmd_ic_check(args):
+    from .icfile import check_ic_file
+
+    init = load_case(args.case, args.cases)["init_times"] if args.case else None
+    problems = check_ic_file(args.path, init, args.variables)
+    if problems:
+        print("problems:\n  " + "\n  ".join(problems))
+        raise SystemExit(1)
+    print("ok")
 
 
 def _safe(name: str) -> str:
@@ -163,11 +194,30 @@ def _verify_tracks(case, truth, forecasts, out, args):
         all_summaries.append(summ)
     if all_summaries:
         summ = pd.concat(all_summaries, ignore_index=True)
+        summ = add_label_columns(summ, "best_track" if best is not None else "era5")
         summ.to_csv(out / "track_summary.csv", index=False)
+        bias = track_bias(summ)
+        if not bias.empty:
+            bias.to_csv(out / "track_bias.csv", index=False)
+            print(f"\nsystematic track/intensity errors against {ref_name} "
+                  "(along>0 too fast, msl>0 too weak):")
+            print(bias.to_string(index=False))
         by_lead = summ.groupby(["model", "lead_h"]).mean(numeric_only=True).round(1)
         by_lead.to_csv(out / "track_summary_by_lead.csv")
         print(f"\ntrack errors against {ref_name} (mean over initial times):")
         print(by_lead.to_string())
+
+
+def add_label_columns(df: pd.DataFrame, reference: str) -> pd.DataFrame:
+    """Split 'model@ic' labels into base_model and ic, and record the verifying reference."""
+    from .run import split_label
+
+    if df.empty or "model" not in df:
+        return df
+    base, ic = zip(*(split_label(str(m).replace(" (mean)", "")) for m in df["model"]))
+    df = df.copy()
+    df["base_model"], df["ic"], df["reference"] = list(base), list(ic), reference
+    return df
 
 
 def cmd_verify(args):
@@ -176,8 +226,15 @@ def cmd_verify(args):
     out = Path(args.out) / case["name"]
     out.mkdir(parents=True, exist_ok=True)
 
-    truth = standardize(xr.open_dataset(rundir / "era5.nc"))
-    forecasts = {p.stem: xr.open_dataset(p) for p in sorted(rundir.glob("*.nc")) if p.stem != "era5"}
+    ref = args.truth
+    if ref != "era5":
+        out = out / f"ref_{ref}"
+        out.mkdir(parents=True, exist_ok=True)
+    tpath = truth_file(rundir, ref)
+    if not tpath.exists():
+        raise SystemExit(f"{tpath} not found: run `kwxeval truth --case {case['name']} --source {ref}` first")
+    truth = standardize(xr.open_dataset(tpath))
+    forecasts = {p.stem: xr.open_dataset(p) for p in sorted(rundir.glob("*.nc")) if not is_truth_file(p)}
     if not forecasts:
         raise SystemExit(f"no forecast files in {rundir}")
     if args.persistence:
@@ -185,6 +242,7 @@ def cmd_verify(args):
     variables = args.variables or [v for v in truth.data_vars]
 
     scores = grid_scores(forecasts, truth, variables, case["region_obj"])
+    scores = add_label_columns(scores, ref)
     scores.to_csv(out / "grid_scores.csv", index=False)
     plots.score_vs_lead(scores, out / "rmse_vs_lead.png", "rmse")
     plots.score_vs_lead(scores, out / "pattern_corr_vs_lead.png", "pattern_corr")
@@ -195,7 +253,7 @@ def cmd_verify(args):
         table, title = spec
         table.to_csv(out / "spectra.csv", index=False)
         plots.spectra(table, out / "spectra.png", title)
-    summary = {"case": case["name"], "models": list(forecasts), "variables": variables}
+    summary = {"case": case["name"], "models": list(forecasts), "variables": variables, "reference": ref}
 
     if case.get("track"):
         _verify_tracks(case, truth, forecasts, out, args)
@@ -216,11 +274,23 @@ def main(argv=None):
     r.add_argument("--models", nargs="+", default=["fcn"])
     r.add_argument("--out", default="runs")
     r.add_argument("--device", default="cuda")
+    r.add_argument("--ic", default="era5", choices=["era5", "ifs", "gfs", "file"],
+                   help="initial conditions (ifs: from 2024-03-01, gfs: from 2021-01-01)")
+    r.add_argument("--ic-path", help="NetCDF from kwxeval.icfile.prepare_ic_file (with --ic file)")
+    r.add_argument("--members", type=int, default=1, help="members for stochastic (ens) models")
     r.set_defaults(func=cmd_run)
+    ms = sub.add_parser("models", help="list registered models")
+    ms.set_defaults(func=cmd_models)
     t = sub.add_parser("truth")
     t.add_argument("--case", required=True)
     t.add_argument("--out", default="runs")
+    t.add_argument("--source", default="era5", choices=["era5", "ifs"])
     t.set_defaults(func=cmd_truth)
+    ic = sub.add_parser("ic-check", help="check an initial-condition file made with kwxeval.icfile")
+    ic.add_argument("path")
+    ic.add_argument("--case")
+    ic.add_argument("--variables", nargs="+")
+    ic.set_defaults(func=cmd_ic_check)
     v = sub.add_parser("verify")
     v.add_argument("--case", required=True)
     v.add_argument("--runs", default="runs")
@@ -229,6 +299,8 @@ def main(argv=None):
     v.add_argument("--persistence", action="store_true", help="add a persistence baseline")
     v.add_argument("--spectrum-variable", help="variable for the power-spectrum figure (default: first)")
     v.add_argument("--best-track", help="IBTrACS CSV (overrides the case's best_track.path)")
+    v.add_argument("--truth", default="era5", choices=["era5", "ifs"],
+                   help="verifying analysis; non-ERA5 results go to <out>/<case>/ref_<truth>/")
     v.set_defaults(func=cmd_verify)
     args = p.parse_args(argv)
     args.func(args)

@@ -1,8 +1,10 @@
 # ai-weather-korea-eval (kwxeval)
 
-공개 AI 기상예측모델(FourCastNet, SFNO, Pangu-Weather, GraphCast)을 **한반도 위험기상 사례**에 돌리고,
-ERA5 분석장과 비교해 성능을 평가하는 도구입니다.
-모델 실행은 NVIDIA [Earth2Studio](https://github.com/NVIDIA/earth2studio)를 쓰고, 초기장과 정답은 공개 ARCO ERA5에서 받습니다.
+공개 AI 기상예측모델(FourCastNet, SFNO, Pangu-Weather, GraphCast, FuXi, AIFS, FCN3, Aurora 등)을
+**한반도 위험기상 사례**에 돌리고, 분석장·최적경로와 비교해 성능을 평가하는 도구입니다.
+모델 실행은 NVIDIA [Earth2Studio](https://github.com/NVIDIA/earth2studio)를 씁니다.
+초기장은 ERA5, GFS, IFS 공개자료, 또는 직접 만든 파일(KIM 등)을 고를 수 있고,
+검증 기준도 ERA5와 IFS 분석 중에서 고를 수 있습니다. 설계는 [`docs/EXPERIMENT_DESIGN.md`](docs/EXPERIMENT_DESIGN.md)에 있습니다.
 
 *English summary below.*
 
@@ -14,7 +16,8 @@ ERA5 분석장과 비교해 성능을 평가하는 도구입니다.
 | 기준 예측 | 지속 예측(persistence)을 함께 계산해 모델의 실제 기술을 확인 |
 | 확률(앙상블) 검증 | 면적 가중 CRPS·공정 CRPS, 퍼짐-오차 비. 결정론 모델은 CRPS = MAE로 함께 비교 |
 | 공간 스펙트럼 | 마지막 예측시간의 파워 스펙트럼을 ERA5와 비교해 작은 규모가 얼마나 뭉개지는지 확인 |
-| 태풍 진로 | 해면기압 최저점 추적. **IBTrACS 최적경로 대비** 진로 오차를 진행 방향(빠름/느림)·직각 방향(오른쪽/왼쪽)으로 분해, 중심기압·최대풍속 오차. ERA5 분석장 진로도 같은 기준으로 평가. 앙상블은 구성원별 진로, 평균 진로, 진로 퍼짐(km) |
+| 초기장·검증 기준 | 같은 모델을 ERA5·GFS·IFS·KIM 초기장으로 돌려 비교. ERA5와 IFS 분석 두 기준으로 검증해 순위가 바뀌는지 확인 |
+| 태풍 진로 | 해면기압 최저점 추적. **IBTrACS 최적경로 대비** 진로 오차를 진행 방향(빠름/느림)·직각 방향(오른쪽/왼쪽)으로 분해, 중심기압·최대풍속 오차, 진행 속도 오차. 부호 있는 평균(편향)을 예측시간 구간별로 따로 냄. ERA5 분석장 진로도 같은 기준으로 평가. 앙상블은 구성원별 진로, 평균 진로, 진로 퍼짐(km) |
 
 ## 사례
 
@@ -46,10 +49,16 @@ pip install -e ".[run]"        # 모델 실행까지 (GPU 필요)
 ```
 
 ```bash
-kwxeval run    --case khanun_2023 --models fcn pangu6 --out runs   # GPU, 인터넷
+kwxeval models                                                     # 모델 목록과 GPU 메모리
+kwxeval run    --case khanun_2023 --models fcn pangu6 --out runs   # GPU, 인터넷 (ERA5 초기장)
+kwxeval run    --case khanun_2023 --models pangu6 --ic gfs --out runs        # GFS 초기장 -> pangu6@gfs.nc
+kwxeval run    --case khanun_2023 --models aifs_ens --members 8 --out runs   # 앙상블 모델
 kwxeval truth  --case khanun_2023 --out runs                       # ERA5 정답 (인터넷)
 kwxeval verify --case khanun_2023 --runs runs --out results --persistence
 ```
+
+IFS 공개자료는 2024-03-01 이후, GFS는 2021-01-01 이후만 받을 수 있습니다(Earth2Studio 0.20 기준).
+KIM 같은 내부 분석장은 `kwxeval.icfile.prepare_ic_file`로 초기장 파일을 만든 뒤 `--ic file --ic-path`로 씁니다.
 
 노트북으로 하려면 `notebooks/run_case.ipynb`를 Colab이나 GPU 서버에서 엽니다.
 
@@ -71,15 +80,17 @@ pytest
 | `track_summary.csv`, `track_summary_by_lead.csv`, `track_components_*.png` | 최적경로 대비 위치·진행 방향·직각 방향·중심기압·최대풍속 오차 |
 | `crps_vs_lead.png`, `spread_skill_vs_lead.png` | 예측 시간별 CRPS, 앙상블 퍼짐-오차 비 |
 | `spectra.csv`, `spectra.png` | 마지막 공통 예측시간의 파워 스펙트럼(앙상블은 구성원 0과 평균) |
+| `track_bias.csv` | 모델·예측시간 구간별 진행 방향·진행 속도·직각 방향·중심기압·최대풍속의 부호 있는 평균 오차 |
+| `ref_ifs/` | `--truth ifs`로 검증한 결과(같은 파일 구성) |
 | `track_*.csv`, `tracks_*.png`, `track_error_*.png` | 태풍 진로, 진로 오차. 앙상블은 `track_<모델>_members_*.csv`도 저장 |
 
 ## 주의할 점
 
-- **GPU 메모리:** Earth2Studio는 대부분 모델에 약 40 GB를 권장합니다. 16 GB급 GPU에서는 실패할 수 있습니다.
+- **GPU 메모리:** 모델마다 40·48·80 GB가 필요합니다(`kwxeval models`). 16 GB급 GPU에서는 실패할 수 있습니다.
 - **모델 라이선스:** 모델 가중치마다 사용 조건이 다릅니다(예: GraphCast 가중치는 비상업 조건). 결과를 공개하기 전에 각 모델의 라이선스를 확인하세요.
-- **정답 자료의 한계:** ERA5로 초기화하고 ERA5로 검증하므로 분석장 자체의 오차는 평가하지 못합니다. 지상 관측 검증은 자매 저장소 [ai-downscale-verify](https://github.com/milianjw8-hue/ai-downscale-verify)를 쓰세요.
+- **정답 자료의 한계:** ERA5로 초기화하고 ERA5로 검증하면 분석장 자체의 오차는 평가하지 못합니다. 가능한 사례는 IFS 분석으로도 검증해 보세요. 지상 관측 검증은 자매 저장소 [ai-downscale-verify](https://github.com/milianjw8-hue/ai-downscale-verify)를 쓰세요.
 - **해상도:** 서로 다른 격자(0.25°, 1°)를 비교할 때는 가장 거친 격자로 맞춘 뒤 점수를 냅니다.
-- **앙상블 파일:** 예측 파일에 `ensemble` 차원이 있으면 앙상블로 처리합니다(Earth2Studio 앙상블 출력과 같은 이름). `kwxeval run`은 아직 결정론 실행만 하므로, 앙상블은 Earth2Studio 앙상블 워크플로로 만든 파일을 `runs/<사례>/`에 넣어 검증하세요.
+- **앙상블 파일:** 예측 파일에 `ensemble` 차원이 있으면 앙상블로 처리합니다(Earth2Studio 앙상블 출력과 같은 이름). `kwxeval run --members N`은 앙상블 모델(AIFS ENS, FCN3, Aurora 1.5 앙상블 등)을 초기 섭동 없이 모델 자체 잡음으로 돌립니다.
 - **진로 추적:** 해면기압 최저점만 따라가는 단순 방식입니다. 약한 저기압이나 상륙 후 쇠약 단계에서는 잘못 잡을 수 있습니다.
 - 이 저장소에는 코드와 합성 자료만 있습니다. 실행 결과(NetCDF)는 커밋하지 않습니다.
 
@@ -95,12 +106,16 @@ pytest
 
 ## English summary
 
-`kwxeval` runs open AI weather models (FourCastNet, SFNO, Pangu-Weather, GraphCast-small) through
-NVIDIA Earth2Studio from ARCO ERA5 initial conditions for Korean high-impact cases (typhoons
-Khanun 2023 and Hinnamnor 2022, heavy rain, strong wind), and verifies them against ERA5 with
+`kwxeval` runs open AI weather models (FourCastNet, SFNO, Pangu-Weather, GraphCast, FuXi, AIFS, FCN3,
+Aurora and others) through NVIDIA Earth2Studio from ERA5, GFS, IFS open-data or user-supplied (e.g. KIM)
+initial conditions for Korean high-impact cases (typhoons
+Khanun 2023 and Hinnamnor 2022, heavy rain, strong wind), and verifies them against ERA5 or the IFS analysis with
 area-weighted RMSE, bias, MAE and pattern correlation by lead time, a persistence baseline,
 ensemble CRPS (plain and fair) and spread-skill ratio, power spectra against the analysis,
 and an MSLP-minimum typhoon tracker scored against IBTrACS best tracks with along-track /
 cross-track error decomposition and central-pressure and maximum-wind errors (per member,
-ensemble mean and track spread for ensembles). A synthetic case
+ensemble mean and track spread for ensembles), plus signed translation-speed and intensity biases.
+Running one model from several initial conditions and verifying against two analyses separates model
+error from initial-condition error and tests whether rankings depend on the reference
+(docs/EXPERIMENT_DESIGN.md). A synthetic case
 lets the verification run without a GPU.

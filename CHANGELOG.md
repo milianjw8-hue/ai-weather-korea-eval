@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 (2026-11-18)
+
+- Initial conditions: `kwxeval run --ic era5|gfs|ifs|file --ic-path`; output named `<model>@<ic>.nc`
+  (ERA5 runs keep the bare name). Archive limits checked before download (IFS open data from 2024-03-01,
+  GFS from 2021-01-01, including the -6 h state)
+- `kwxeval.icfile`: regrid a global analysis (e.g. KIM) to the Earth2Studio 0.25 deg grid,
+  `check_ic_file` (dims, grid, times, NaN, unit sanity), `kwxeval ic-check`
+- Model registry with kind and GPU memory: adds GraphCast operational, FuXi, FengWu, AIFS, AIFS ENS,
+  AIFS2, AIFS2 ENS, FCN3, Aurora, Aurora 1.5 ensemble, WeatherNext 2 Cyclones; `kwxeval models`
+- Stochastic models run as ensembles (`--members`) with zero initial perturbation
+- Second verifying analysis: `kwxeval truth --source ifs`, `kwxeval verify --truth ifs` (-> `ref_ifs/`);
+  `base_model`, `ic`, `reference` columns in grid and track tables
+- Typhoon: translation-speed error and `track_bias.csv` (signed mean along/cross-track, share ahead,
+  speed, central pressure and maximum wind errors by lead window)
+- Synthetic case adds `model_a@gfs` and `truth_ifs.nc`; docs/EXPERIMENT_DESIGN.md
+
 ## 0.3.0 (2026-11-18)
 
 - Best-track verification: IBTrACS v04r01 CSV reader (`kwxeval.besttrack`) with agency choice

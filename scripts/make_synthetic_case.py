@@ -1,8 +1,9 @@
 """Create a SYNTHETIC typhoon case to test `kwxeval verify` without a GPU or internet.
 
-Writes runs/<case>/era5.nc (truth) and two fake "model" forecasts:
+Writes runs/<case>/era5.nc (truth), truth_ifs.nc (a second analysis), and fake "model" forecasts:
   model_a  small position offset growing with lead time, slight weakening
   model_b  larger offset and stronger weakening (smoother field)
+  model_a@gfs  model_a from another initial condition (more offset)
 Nothing here is real data.
 
 Usage: python scripts/make_synthetic_case.py --case synthetic_typhoon --out runs
@@ -66,7 +67,17 @@ def main():
                coords={"time": vt, "lat": LAT, "lon": LON},
                attrs={"title": "SYNTHETIC truth (not real data)"}).to_netcdf(d / "era5.nc")
 
-    for name, off, wk in (("model_a", 60.0, 0.1), ("model_b", 180.0, 0.35)):
+    # second verifying analysis ("IFS"): truth plus small analysis noise, to show reference sensitivity
+    rng0 = np.random.default_rng(7)
+    noise = {"msl": 60.0, "u10m": 0.8, "v10m": 0.8, "t2m": 0.5, "z500": 15.0}
+    xr.Dataset({k: (("time", "lat", "lon"), v + rng0.normal(0, noise[k], v.shape).astype("float32"))
+                for k, v in tr.items()},
+               coords={"time": vt, "lat": LAT, "lon": LON},
+               attrs={"title": "SYNTHETIC second analysis (not real data)", "reference": "ifs"}
+               ).to_netcdf(d / "truth_ifs.nc")
+
+    # model_a@gfs: the same model started from a different (worse) initial state
+    for name, off, wk in (("model_a", 60.0, 0.1), ("model_b", 180.0, 0.35), ("model_a@gfs", 110.0, 0.15)):
         f = fields(vt, off, wk)
         ds = xr.Dataset({k: (("time", "lead_time", "lat", "lon"), v[None]) for k, v in f.items()},
                         coords={"time": [init], "lead_time": leads.astype(int), "lat": LAT, "lon": LON},
