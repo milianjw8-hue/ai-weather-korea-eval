@@ -11,7 +11,10 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from .probabilistic import crps_ensemble, spread_skill
 from .regions import Region
+
+ENSEMBLE_DIM = "ensemble"  # dimension name used by Earth2Studio ensemble output
 
 
 def standardize(ds: xr.Dataset) -> xr.Dataset:
@@ -66,9 +69,30 @@ def _scores(f: xr.DataArray, o: xr.DataArray, w: xr.DataArray) -> dict:
             "n_points": int(ok.sum())}
 
 
+def _ensemble_scores(f: xr.DataArray, o: xr.DataArray, w: xr.DataArray) -> dict:
+    """Area-weighted CRPS (plain and fair) and spread-skill for an ensemble field (ensemble, lat, lon)."""
+    f = f.transpose(ENSEMBLE_DIM, ...)
+    x = np.moveaxis(f.values, 0, -1)
+    y = o.transpose(*f.dims[1:]).values
+    wt = w.broadcast_like(o).transpose(*f.dims[1:]).values
+    out = {"members": int(f.sizes[ENSEMBLE_DIM])}
+    for key, fair in (("crps", False), ("crps_fair", True)):
+        c = crps_ensemble(y, x, fair=fair)
+        ok = np.isfinite(c)
+        out[key] = float((wt[ok] * c[ok]).sum() / wt[ok].sum())
+    ss = spread_skill(y, x, weights=wt)
+    out.update(spread=ss["spread"], spread_skill_ratio=ss["spread_skill_ratio"])
+    return out
+
+
 def grid_scores(forecasts: dict[str, xr.Dataset], truth: xr.Dataset, variables: list[str], region: Region,
                 resolution: float | None = None) -> pd.DataFrame:
-    """Return a tidy table: model, init_time, lead_h, valid_time, variable, rmse, bias, mae, pattern_corr."""
+    """Return a tidy table: model, init_time, lead_h, valid_time, variable, rmse, bias, mae, pattern_corr, crps.
+
+    Forecasts with an `ensemble` dimension are scored on the ensemble mean for the deterministic
+    scores and on all members for crps, crps_fair, spread and spread_skill_ratio. Deterministic
+    forecasts get crps = mae so every model shares one proper score.
+    """
     truth = standardize(truth)
     forecasts = {k: standardize(v) for k, v in forecasts.items()}
     lat, lon = common_grid(forecasts, truth, region, resolution)
@@ -85,7 +109,14 @@ def grid_scores(forecasts: dict[str, xr.Dataset], truth: xr.Dataset, variables: 
                 for v in variables:
                     if v not in fg or v not in tg:
                         continue
-                    s = _scores(fg[v].sel(time=t0, lead_time=lt), tg[v].sel(time=vt), w)
+                    f = fg[v].sel(time=t0, lead_time=lt)
+                    o = tg[v].sel(time=vt)
+                    if ENSEMBLE_DIM in f.dims:
+                        s = _scores(f.mean(ENSEMBLE_DIM), o, w)
+                        s.update(_ensemble_scores(f, o, w))
+                    else:
+                        s = _scores(f, o, w)
+                        s.update(members=1, crps=s["mae"])  # CRPS of a point forecast = absolute error
                     rows.append({"model": name, "init_time": pd.Timestamp(t0), "lead_h": lt / np.timedelta64(1, "h"),
                                  "valid_time": pd.Timestamp(vt), "variable": v, **s})
     if not rows:

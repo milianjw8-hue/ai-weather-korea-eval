@@ -26,6 +26,22 @@
 
 초기시각의 정답장을 모든 예측시간에 그대로 둔 예측입니다. 모델 RMSE가 지속 예측보다 작아야 의미 있는 기술이 있다고 봅니다.
 
+### 앙상블
+
+예측 파일에 `ensemble` 차원이 있으면 RMSE·편차·MAE·패턴 상관은 앙상블 평균으로, 다음은 전체 구성원으로 계산합니다.
+
+| 지표 | 정의 |
+|---|---|
+| CRPS | 격자점마다 $\frac{1}{m}\sum_i\lvert x_i - o\rvert - \frac{1}{2m^2}\sum_{i,j}\lvert x_i - x_j\rvert$, 면적 가중 평균 |
+| 공정 CRPS | 둘째 항 분모를 $2m(m-1)$로 (Ferro, 2014) |
+| 퍼짐-오차 비 | $\sqrt{\tfrac{m+1}{m}\overline{s^2}} / \mathrm{RMSE}(\bar{x})$, 면적 가중 (Fortin et al., 2014) |
+
+결정론 예측의 CRPS는 MAE와 같으므로 결정론 모델과 앙상블을 같은 척도로 비교할 수 있습니다.
+
+### 파워 스펙트럼
+
+평균을 빼고 2차원 Hann 창을 씌운 뒤 FFT로 구한 파워를 파수 크기별로 평균합니다. 영역 격자는 국지 직교좌표로 근사합니다($dx = R\cos\phi_0\,d\lambda$). 같은 격자에서 모델끼리 상대 비교하는 용도이며 절대 기울기 해석에는 쓰지 않습니다.
+
 ## 3. 태풍 진로
 
 - 첫 시각은 `first_guess`에서 `search_km`(기본 400~500 km) 안의 해면기압 최저 격자점을 중심으로 잡습니다.
@@ -34,9 +50,15 @@
 - 진로 오차는 같은 유효시각의 ERA5 중심과의 대권거리(km)입니다.
 - 격자점 위치만 쓰므로 위치 분해능은 격자 간격(0.25°에서 약 28 km)으로 제한됩니다.
 
+앙상블은 구성원마다 같은 방법으로 진로를 추적하고, 시각별 평균 위치·중심기압을 앙상블 평균 진로로 씁니다. 진로 퍼짐은 구성원 위치와 평균 위치 사이 대권거리의 평균입니다.
+
 ERA5 진로도 같은 방법으로 추적한 값이므로 최적경로와 다를 수 있습니다. 보고할 때는 IBTrACS 또는 기상청 최적경로와 함께 제시하는 것을 권합니다.
 
 ## 참고 문헌
+
+- Ferro, C. A. T. (2014). Fair scores for ensemble forecasts. *Q. J. R. Meteorol. Soc.*, 140, 1917–1923.
+- Fortin, V., et al. (2014). Why should ensemble spread match the RMSE of the ensemble mean? *J. Hydrometeor.*, 15, 1708–1713.
+- Hersbach, H. (2000). Decomposition of the continuous ranked probability score for ensemble prediction systems. *Wea. Forecasting*, 15, 559–570.
 
 - Pathak, J., et al. (2022). FourCastNet: A global data-driven high-resolution weather model using adaptive Fourier neural operators. arXiv:2202.11214.
 - Bonev, B., et al. (2023). Spherical Fourier neural operators: Learning stable dynamics on the sphere. arXiv:2306.03838.

@@ -18,8 +18,9 @@ import yaml
 
 from . import plots
 from .regions import REGIONS
-from .track import forecast_to_valid_time, track_errors, track_minimum
-from .verify import grid_scores, persistence, standardize
+from .track import ensemble_mean_track, forecast_to_valid_time, track_errors, track_minimum
+from .spectra import spectra_table
+from .verify import ENSEMBLE_DIM, common_grid, grid_scores, persistence, standardize, to_grid
 
 ROOT_CASES = Path(__file__).resolve().parents[2] / "cases" / "cases.yaml"
 
@@ -59,6 +60,39 @@ def cmd_truth(args):
     print(f"saved {out}")
 
 
+def _safe(name: str) -> str:
+    return name.replace(" (mean)", "_mean").replace(" ", "_")
+
+
+def _spectra_at_last_lead(forecasts, truth, case, variable):
+    """Spectra of truth and each model at the longest lead of the first initial time (common grid)."""
+    if variable not in truth:
+        return None
+    t0 = np.datetime64(pd.Timestamp(case["init_times"][0]))
+    fcs = {k: standardize(v) for k, v in forecasts.items() if variable in v}
+    lat, lon = common_grid(fcs, truth, case["region_obj"])
+    fields, lead = {}, None
+    for name, fc in fcs.items():
+        if t0 not in fc["time"].values:
+            continue
+        leads = [lt for lt in fc["lead_time"].values if t0 + lt in truth["time"].values]
+        if not leads:
+            continue
+        lead = max(leads) if lead is None else min(lead, max(leads))
+    if lead is None:
+        return None
+    fields["ERA5"] = to_grid(truth[[variable]], lat, lon)[variable].sel(time=t0 + lead)
+    for name, fc in fcs.items():
+        f = to_grid(fc[[variable]], lat, lon)[variable].sel(time=t0, lead_time=lead)
+        if ENSEMBLE_DIM in f.dims:
+            fields[f"{name} (member 0)"] = f.isel({ENSEMBLE_DIM: 0})
+            fields[f"{name} (mean)"] = f.mean(ENSEMBLE_DIM)
+        else:
+            fields[name] = f
+    title = f"{variable}, lead {int(lead / np.timedelta64(1, 'h'))} h from {pd.Timestamp(t0):%Y-%m-%d %H} UTC"
+    return spectra_table(fields), title
+
+
 def cmd_verify(args):
     case = load_case(args.case, args.cases)
     rundir = Path(args.runs) / case["name"]
@@ -77,6 +111,13 @@ def cmd_verify(args):
     scores.to_csv(out / "grid_scores.csv", index=False)
     plots.score_vs_lead(scores, out / "rmse_vs_lead.png", "rmse")
     plots.score_vs_lead(scores, out / "pattern_corr_vs_lead.png", "pattern_corr")
+    plots.score_vs_lead(scores, out / "crps_vs_lead.png", "crps")
+    plots.spread_skill_vs_lead(scores, out / "spread_skill_vs_lead.png")
+    spec = _spectra_at_last_lead(forecasts, truth, case, args.spectrum_variable or variables[0])
+    if spec is not None:
+        table, title = spec
+        table.to_csv(out / "spectra.csv", index=False)
+        plots.spectra(table, out / "spectra.png", title)
     summary = {"case": case["name"], "models": list(forecasts), "variables": variables}
 
     if case.get("track"):
@@ -95,18 +136,28 @@ def cmd_verify(args):
                     continue
                 f = forecast_to_valid_time(standardize(fc), t0)
                 ws = np.hypot(f["u10m"], f["v10m"]) if "u10m" in f else None
-                tr = track_minimum(f["msl"], fg, case.get("search_km", 400), ws)
-                tr.to_csv(out / f"track_{name}_{t0s}.csv", index=False)
+                if ENSEMBLE_DIM in f["msl"].dims:
+                    member_tracks = [
+                        track_minimum(f["msl"].isel({ENSEMBLE_DIM: k}), fg, case.get("search_km", 400),
+                                      None if ws is None else ws.isel({ENSEMBLE_DIM: k})).assign(member=k)
+                        for k in range(f.sizes[ENSEMBLE_DIM])]
+                    mt = pd.concat(member_tracks, ignore_index=True)
+                    mt.to_csv(out / f"track_{name}_members_{t0s}.csv", index=False)
+                    tr = ensemble_mean_track(mt)
+                    name = f"{name} (mean)"
+                else:
+                    tr = track_minimum(f["msl"], fg, case.get("search_km", 400), ws)
+                tr.to_csv(out / f"track_{_safe(name)}_{t0s}.csv", index=False)
                 tracks[name] = tr
                 errs[name] = track_errors(tr, ref_t)
-                errs[name].to_csv(out / f"track_error_{name}_{t0s}.csv", index=False)
+                errs[name].to_csv(out / f"track_error_{_safe(name)}_{t0s}.csv", index=False)
             r = case["region_obj"]
             plots.tracks(tracks, out / f"tracks_{t0s}.png", (r.lon_min, r.lon_max, r.lat_min, r.lat_max))
             plots.track_error_vs_lead(errs, t0, out / f"track_error_{t0s}.png")
         summary["track"] = True
 
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-    mean = scores.groupby(["variable", "model", "lead_h"])[["rmse", "pattern_corr"]].mean().round(3)
+    mean = scores.groupby(["variable", "model", "lead_h"])[["rmse", "pattern_corr", "crps"]].mean().round(3)
     print(mean.to_string())
     print(f"results in {out}")
 
@@ -131,6 +182,7 @@ def main(argv=None):
     v.add_argument("--out", default="results")
     v.add_argument("--variables", nargs="+")
     v.add_argument("--persistence", action="store_true", help="add a persistence baseline")
+    v.add_argument("--spectrum-variable", help="variable for the power-spectrum figure (default: first)")
     v.set_defaults(func=cmd_verify)
     args = p.parse_args(argv)
     args.func(args)

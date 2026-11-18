@@ -74,6 +74,15 @@ def main():
         # integer hours: readable by every xarray version (standardize() converts to timedelta)
         ds["lead_time"].attrs["long_name"] = "lead time in hours"
         ds.to_netcdf(d / f"{name}.nc")
+    # 6-member ensemble: each member has its own track offset, so spread grows with lead time
+    rng = np.random.default_rng(1)
+    members = [fields(vt, float(rng.normal(60.0, 90.0)), 0.1) for _ in range(6)]
+    ens = xr.Dataset({k: (("ensemble", "time", "lead_time", "lat", "lon"),
+                          np.stack([m[k] for m in members])[:, None]) for k in members[0]},
+                     coords={"ensemble": np.arange(6), "time": [init], "lead_time": leads.astype(int),
+                             "lat": LAT, "lon": LON},
+                     attrs={"title": "SYNTHETIC ensemble forecast model_ens (not real data)"})
+    ens.to_netcdf(d / "model_ens.nc")
     print(f"synthetic case written to {d}")
 
 

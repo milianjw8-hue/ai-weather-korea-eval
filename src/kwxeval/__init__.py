@@ -5,7 +5,7 @@ as written by Earth2Studio's NetCDF4 backend (cropped to the region by `kwxeval.
 Truth files are NetCDF with dims (time, lat, lon).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .regions import KOREA, Region  # noqa: F401
 from .verify import grid_scores  # noqa: F401

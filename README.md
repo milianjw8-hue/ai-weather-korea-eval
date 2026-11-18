@@ -12,7 +12,9 @@ ERA5 분석장과 비교해 성능을 평가하는 도구입니다.
 |---|---|
 | 격자 검증 (msl, u10m, v10m, t2m, z500) | 면적 가중(cos 위도) RMSE, 편차, MAE, 패턴 상관계수를 예측 시간별로 계산 |
 | 기준 예측 | 지속 예측(persistence)을 함께 계산해 모델의 실제 기술을 확인 |
-| 태풍 진로 | 해면기압 최저점 추적, 진로 오차(km), 중심기압 오차, 중심 300 km 안 최대 풍속 |
+| 확률(앙상블) 검증 | 면적 가중 CRPS·공정 CRPS, 퍼짐-오차 비. 결정론 모델은 CRPS = MAE로 함께 비교 |
+| 공간 스펙트럼 | 마지막 예측시간의 파워 스펙트럼을 ERA5와 비교해 작은 규모가 얼마나 뭉개지는지 확인 |
+| 태풍 진로 | 해면기압 최저점 추적, 진로 오차(km), 중심기압 오차, 중심 300 km 안 최대 풍속. 앙상블은 구성원별 진로, 평균 진로, 진로 퍼짐(km) |
 
 ## 사례
 
@@ -60,7 +62,9 @@ pytest
 |---|---|
 | `grid_scores.csv` | 모델·초기시각·예측시간·변수별 RMSE, 편차, MAE, 패턴 상관 |
 | `rmse_vs_lead.png`, `pattern_corr_vs_lead.png` | 예측 시간별 점수 그림 |
-| `track_*.csv`, `tracks_*.png`, `track_error_*.png` | 태풍 진로, 진로 오차 |
+| `crps_vs_lead.png`, `spread_skill_vs_lead.png` | 예측 시간별 CRPS, 앙상블 퍼짐-오차 비 |
+| `spectra.csv`, `spectra.png` | 마지막 공통 예측시간의 파워 스펙트럼(앙상블은 구성원 0과 평균) |
+| `track_*.csv`, `tracks_*.png`, `track_error_*.png` | 태풍 진로, 진로 오차. 앙상블은 `track_<모델>_members_*.csv`도 저장 |
 
 ## 주의할 점
 
@@ -68,6 +72,7 @@ pytest
 - **모델 라이선스:** 모델 가중치마다 사용 조건이 다릅니다(예: GraphCast 가중치는 비상업 조건). 결과를 공개하기 전에 각 모델의 라이선스를 확인하세요.
 - **정답 자료의 한계:** ERA5로 초기화하고 ERA5로 검증하므로 분석장 자체의 오차는 평가하지 못합니다. 지상 관측 검증은 자매 저장소 [ai-downscale-verify](https://github.com/milianjw8-hue/ai-downscale-verify)를 쓰세요.
 - **해상도:** 서로 다른 격자(0.25°, 1°)를 비교할 때는 가장 거친 격자로 맞춘 뒤 점수를 냅니다.
+- **앙상블 파일:** 예측 파일에 `ensemble` 차원이 있으면 앙상블로 처리합니다(Earth2Studio 앙상블 출력과 같은 이름). `kwxeval run`은 아직 결정론 실행만 하므로, 앙상블은 Earth2Studio 앙상블 워크플로로 만든 파일을 `runs/<사례>/`에 넣어 검증하세요.
 - **진로 추적:** 해면기압 최저점만 따라가는 단순 방식입니다. 약한 저기압이나 상륙 후 쇠약 단계에서는 잘못 잡을 수 있습니다.
 - 이 저장소에는 코드와 합성 자료만 있습니다. 실행 결과(NetCDF)는 커밋하지 않습니다.
 
@@ -87,5 +92,7 @@ pytest
 NVIDIA Earth2Studio from ARCO ERA5 initial conditions for Korean high-impact cases (typhoons
 Khanun 2023 and Hinnamnor 2022, heavy rain, strong wind), and verifies them against ERA5 with
 area-weighted RMSE, bias, MAE and pattern correlation by lead time, a persistence baseline,
-and an MSLP-minimum typhoon tracker with track and central-pressure errors. A synthetic case
+ensemble CRPS (plain and fair) and spread-skill ratio, power spectra against the analysis,
+and an MSLP-minimum typhoon tracker with track and central-pressure errors (per member,
+ensemble mean and track spread for ensembles). A synthetic case
 lets the verification run without a GPU.

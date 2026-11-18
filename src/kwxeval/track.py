@@ -68,3 +68,18 @@ def track_errors(fc_track: pd.DataFrame, ref_track: pd.DataFrame) -> pd.DataFram
     m["position_error_km"] = great_circle_km(m["lat_fc"], m["lon_fc"], m["lat_ref"], m["lon_ref"])
     m["msl_error"] = m["msl_min_fc"] - m["msl_min_ref"]
     return m
+
+
+def ensemble_mean_track(member_tracks: pd.DataFrame) -> pd.DataFrame:
+    """Mean position, central pressure and wind of member tracks at each time, plus the track spread
+    (mean great-circle distance of members from the mean position, km)."""
+    g = member_tracks.dropna(subset=["lat", "lon"]).groupby("time")
+    agg = {"lat": "mean", "lon": "mean", "msl_min": "mean"}
+    if "wind_max" in member_tracks:
+        agg["wind_max"] = "mean"
+    mean = g.agg(agg).reset_index()
+    mean["n_members"] = g.size().values
+    sp = member_tracks.merge(mean[["time", "lat", "lon"]], on="time", suffixes=("", "_mean"))
+    sp["d"] = great_circle_km(sp["lat"], sp["lon"], sp["lat_mean"], sp["lon_mean"])
+    mean["track_spread_km"] = sp.groupby("time")["d"].mean().reindex(mean["time"]).values
+    return mean

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kwxeval"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evaluate open AI weather prediction models (FourCastNet, SFNO, Pangu-Weather, GraphCast) on Korean high-impact weather cases"
 readme = "README.md"
 license = { text = "MIT" }
