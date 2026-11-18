@@ -69,8 +69,10 @@ def main():
     for name, off, wk in (("model_a", 60.0, 0.1), ("model_b", 180.0, 0.35)):
         f = fields(vt, off, wk)
         ds = xr.Dataset({k: (("time", "lead_time", "lat", "lon"), v[None]) for k, v in f.items()},
-                        coords={"time": [init], "lead_time": leads, "lat": LAT, "lon": LON},
+                        coords={"time": [init], "lead_time": leads.astype(int), "lat": LAT, "lon": LON},
                         attrs={"title": f"SYNTHETIC forecast {name} (not real data)"})
+        # integer hours: readable by every xarray version (standardize() converts to timedelta)
+        ds["lead_time"].attrs["long_name"] = "lead time in hours"
         ds.to_netcdf(d / f"{name}.nc")
     print(f"synthetic case written to {d}")
 
