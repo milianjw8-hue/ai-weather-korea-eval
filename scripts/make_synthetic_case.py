@@ -83,6 +83,14 @@ def main():
                              "lat": LAT, "lon": LON},
                      attrs={"title": "SYNTHETIC ensemble forecast model_ens (not real data)"})
     ens.to_netcdf(d / "model_ens.nc")
+    # IBTrACS-style best track of the synthetic storm (exact centres, header + units row like v04r01)
+    rows = ["SID,SEASON,NUMBER,BASIN,SUBBASIN,NAME,ISO_TIME,NATURE,LAT,LON,WMO_WIND,WMO_PRES,WMO_AGENCY",
+            " ,Year, , , , , , ,degrees_north,degrees_east,kts,mb, "]
+    for h in range(0, 97, 6):
+        la, lo = centre(h)
+        t = (pd.Timestamp(init) + pd.Timedelta(hours=h)).strftime("%Y-%m-%d %H:%M:%S")
+        rows.append(f"2030213N25126,2030,1,WP,MM,SYNTH,{t},TS,{la:.4f},{lo:.4f},80,955,tokyo")
+    (d / "ibtracs_synthetic.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
     print(f"synthetic case written to {d}")
 
 

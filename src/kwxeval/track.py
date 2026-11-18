@@ -62,12 +62,64 @@ def forecast_to_valid_time(ds: xr.Dataset, init_time) -> xr.Dataset:
     return x.drop_vars("time").rename({"lead_time": "time"}).assign_coords(time=vt)
 
 
+def reference_motion(ref_track: pd.DataFrame) -> pd.DataFrame:
+    """Unit vector (east, north) of the reference storm motion at each fix, from centred differences
+    (one-sided at the ends), and translation speed in km/h."""
+    r = ref_track.sort_values("time").reset_index(drop=True)
+    lat, lon = r["lat"].to_numpy(float), r["lon"].to_numpy(float)
+    t = (r["time"] - r["time"].iloc[0]) / np.timedelta64(1, "h")
+    n = len(r)
+    ex, ny_, spd = np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan)
+    for i in range(n):
+        a, b = max(i - 1, 0), min(i + 1, n - 1)
+        if a == b:
+            continue
+        dx = np.deg2rad(lon[b] - lon[a]) * EARTH_RADIUS_KM * np.cos(np.deg2rad(0.5 * (lat[a] + lat[b])))
+        dy = np.deg2rad(lat[b] - lat[a]) * EARTH_RADIUS_KM
+        d = np.hypot(dx, dy)
+        if d > 0:
+            ex[i], ny_[i] = dx / d, dy / d
+            spd[i] = d / (t.iloc[b] - t.iloc[a])
+    return pd.DataFrame({"time": r["time"], "motion_e": ex, "motion_n": ny_, "speed_kmh": spd})
+
+
 def track_errors(fc_track: pd.DataFrame, ref_track: pd.DataFrame) -> pd.DataFrame:
-    """Direct position error (km) and central-pressure error at matching times."""
-    m = fc_track.merge(ref_track, on="time", suffixes=("_fc", "_ref"))
+    """Position, along-track, cross-track and intensity errors at matching times.
+
+    along_track_km > 0: forecast centre AHEAD of the reference (too fast);
+    cross_track_km > 0: forecast centre to the RIGHT of the reference motion.
+    msl_error is in the input unit (Pa for ERA5/model fields and best tracks read by kwxeval);
+    msl_error_hpa is the same in hPa. wind_error compares maximum wind (m/s) when both exist.
+    """
+    ref = ref_track.merge(reference_motion(ref_track), on="time")
+    m = fc_track.merge(ref, on="time", suffixes=("_fc", "_ref"))
     m["position_error_km"] = great_circle_km(m["lat_fc"], m["lon_fc"], m["lat_ref"], m["lon_ref"])
-    m["msl_error"] = m["msl_min_fc"] - m["msl_min_ref"]
+    # local tangent plane at the reference fix
+    dx = np.deg2rad(m["lon_fc"] - m["lon_ref"]) * EARTH_RADIUS_KM * np.cos(np.deg2rad(m["lat_ref"]))
+    dy = np.deg2rad(m["lat_fc"] - m["lat_ref"]) * EARTH_RADIUS_KM
+    m["along_track_km"] = dx * m["motion_e"] + dy * m["motion_n"]
+    m["cross_track_km"] = dx * m["motion_n"] - dy * m["motion_e"]
+    if "msl_min_fc" in m and "msl_min_ref" in m:
+        m["msl_error"] = m["msl_min_fc"] - m["msl_min_ref"]
+        m["msl_error_hpa"] = m["msl_error"] / 100.0
+    if "wind_max_fc" in m and "wind_max_ref" in m:
+        m["wind_error"] = m["wind_max_fc"] - m["wind_max_ref"]
     return m
+
+
+def summarize_track_errors(err_tables: dict[str, pd.DataFrame], init_time) -> pd.DataFrame:
+    """One row per model and lead time with the error components."""
+    t0 = pd.Timestamp(init_time)
+    rows = []
+    cols = ["position_error_km", "along_track_km", "cross_track_km", "msl_error_hpa", "wind_error"]
+    for name, e in err_tables.items():
+        x = e.copy()
+        x["lead_h"] = (pd.to_datetime(x["time"]) - t0) / np.timedelta64(1, "h")
+        x = x[[c for c in ["lead_h", *cols] if c in x]]
+        x.insert(0, "model", name)
+        x.insert(1, "init_time", t0)
+        rows.append(x)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
 def ensemble_mean_track(member_tracks: pd.DataFrame) -> pd.DataFrame:

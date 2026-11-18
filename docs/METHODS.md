@@ -50,11 +50,24 @@
 - 진로 오차는 같은 유효시각의 ERA5 중심과의 대권거리(km)입니다.
 - 격자점 위치만 쓰므로 위치 분해능은 격자 간격(0.25°에서 약 28 km)으로 제한됩니다.
 
+### 최적경로 대비 오차 분해
+
+기준(최적경로 또는 ERA5 진로)의 이동 방향 단위벡터 $\hat{\mathbf{h}}$를 앞뒤 시각 중심차분으로 구합니다(끝 시각은 한쪽 차분). 기준 위치에서의 국지 평면으로 위치 오차 벡터 $\mathbf{e} = (\Delta x, \Delta y)$, $\Delta x = R\cos\phi\,\Delta\lambda$, $\Delta y = R\,\Delta\phi$를 만들고 다음처럼 나눕니다.
+
+| 성분 | 정의 | 부호 |
+|---|---|---|
+| 진행 방향 오차(along-track) | $\mathbf{e}\cdot\hat{\mathbf{h}}$ | + = 예측이 앞섬(이동 빠름) |
+| 직각 방향 오차(cross-track) | $\Delta x\,h_y - \Delta y\,h_x$ | + = 진행 방향의 오른쪽 |
+
+중심기압 오차는 예측 최저 해면기압 − 최적경로 중심기압(hPa)입니다. 최대풍속 오차는 중심 300 km 안의 10 m 최대풍속 − 최적경로 최대풍속입니다. 0.25° 격자 모델은 태풍 중심을 다 해상하지 못하므로 두 강도 오차에는 해상도 효과가 섞여 있습니다. ERA5 분석장 진로를 같은 기준으로 평가해 그 크기를 함께 보입니다.
+
 앙상블은 구성원마다 같은 방법으로 진로를 추적하고, 시각별 평균 위치·중심기압을 앙상블 평균 진로로 씁니다. 진로 퍼짐은 구성원 위치와 평균 위치 사이 대권거리의 평균입니다.
 
 ERA5 진로도 같은 방법으로 추적한 값이므로 최적경로와 다를 수 있습니다. 보고할 때는 IBTrACS 또는 기상청 최적경로와 함께 제시하는 것을 권합니다.
 
 ## 참고 문헌
+
+- Knapp, K. R., et al. (2010). The International Best Track Archive for Climate Stewardship (IBTrACS). *Bull. Amer. Meteor. Soc.*, 91, 363–376.
 
 - Ferro, C. A. T. (2014). Fair scores for ensemble forecasts. *Q. J. R. Meteorol. Soc.*, 140, 1917–1923.
 - Fortin, V., et al. (2014). Why should ensemble spread match the RMSE of the ensemble mean? *J. Hydrometeor.*, 15, 1708–1713.

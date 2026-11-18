@@ -1,8 +1,10 @@
 # Korean high-impact weather cases.
 # init_times: UTC initial conditions; hours: forecast length.
-# first_guess: approximate typhoon centre (lat, lon) at the FIRST valid time used for tracking.
-#   These are rough starting points only; the tracker searches within search_km.
-#   Check positions against IBTrACS or the KMA typhoon best track before reporting results.
+# first_guess: approximate typhoon centre (lat, lon) used only when no best track is configured.
+# best_track: IBTrACS v04r01 CSV (western Pacific file). Download it once, e.g. to data/, from
+#   https://www.ncei.noaa.gov/products/international-best-track-archive
+#   agency: WMO (RSMC Tokyo in this basin, 10-min wind) | TOKYO | KMA | CMA | HKO | USA (1-min wind)
+#   Errors are then computed against the best track; without it, against the ERA5-tracked centre.
 
 khanun_2023:
   description: Typhoon Khanun (2306) crossing the Korean Peninsula, landfall around 10 Aug 2023
@@ -12,6 +14,7 @@ khanun_2023:
   track: true
   first_guess: [29.0, 130.0]
   search_km: 500
+  best_track: {path: data/ibtracs.WP.list.v04r01.csv, name: KHANUN, season: 2023, agency: WMO}
 
 hinnamnor_2022:
   description: Typhoon Hinnamnor (2211) landfall near Geoje on 6 Sep 2022
@@ -21,6 +24,7 @@ hinnamnor_2022:
   track: true
   first_guess: [25.0, 125.0]
   search_km: 500
+  best_track: {path: data/ibtracs.WP.list.v04r01.csv, name: HINNAMNOR, season: 2022, agency: WMO}
 
 seoul_rain_2022:
   description: Central-region heavy rainfall, 8 Aug 2022 (large-scale fields only; precipitation not evaluated)
@@ -44,3 +48,4 @@ synthetic_typhoon:
   track: true
   first_guess: [25.0, 126.0]
   search_km: 500
+  best_track: {path: runs/synthetic_typhoon/ibtracs_synthetic.csv, name: SYNTH, season: 2030, agency: WMO}

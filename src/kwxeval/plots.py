@@ -31,7 +31,7 @@ def score_vs_lead(scores: pd.DataFrame, path, score: str = "rmse"):
     plt.close(fig)
 
 
-def tracks(track_tables: dict[str, pd.DataFrame], path, extent=(115, 140, 20, 45)):
+def tracks(track_tables: dict[str, pd.DataFrame], path, extent=(115, 140, 20, 45), reference: str | None = None):
     """Plot tracks; uses cartopy coastlines when cartopy is installed."""
     try:
         import cartopy.crs as ccrs
@@ -52,7 +52,7 @@ def tracks(track_tables: dict[str, pd.DataFrame], path, extent=(115, 140, 20, 45
         ax.grid(alpha=0.3)
         kw = {}
     for i, (name, t) in enumerate(track_tables.items()):
-        is_ref = name.lower() in ("era5", "reference", "best track")
+        is_ref = name == reference if reference else name.lower() in ("era5", "reference", "best track")
         color = "k" if is_ref else COLORS[i % len(COLORS)]
         ax.plot(t["lon"], t["lat"], "-", color=color, lw=1.8, marker="o", ms=3, label=name, **kw)
     ax.legend(fontsize=7, loc="lower right")
@@ -110,6 +110,31 @@ def spread_skill_vs_lead(scores: pd.DataFrame, path):
         ax.set_ylabel("spread / RMSE")
         ax.grid(alpha=0.3)
     axes[0][0].legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
+def track_components(summary: pd.DataFrame, path, reference_name: str = "best track"):
+    """Four panels vs lead time: position, along-track, cross-track and central-pressure errors."""
+    if summary.empty:
+        return
+    panels = [("position_error_km", "position error (km)"), ("along_track_km", "along-track (km, + = ahead)"),
+              ("cross_track_km", "cross-track (km, + = right)"), ("msl_error_hpa", "central pressure error (hPa)")]
+    panels = [p for p in panels if p[0] in summary]
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.3 * len(panels), 3.1), squeeze=False)
+    models = list(dict.fromkeys(summary["model"]))
+    for ax, (col, label) in zip(axes[0], panels):
+        for i, m in enumerate(models):
+            s = summary[summary.model == m].groupby("lead_h")[col].mean()
+            ax.plot(s.index, s.values, "o-", ms=3, color=COLORS[i % len(COLORS)], label=m)
+        if col != "position_error_km":
+            ax.axhline(0, color="k", lw=0.6)
+        ax.set_xlabel("lead time (h)")
+        ax.set_title(label, fontsize=9)
+        ax.grid(alpha=0.3)
+    axes[0][0].legend(fontsize=7)
+    fig.suptitle(f"errors against {reference_name}", fontsize=9)
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)

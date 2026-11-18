@@ -18,7 +18,8 @@ import yaml
 
 from . import plots
 from .regions import REGIONS
-from .track import ensemble_mean_track, forecast_to_valid_time, track_errors, track_minimum
+from .besttrack import load_best_track
+from .track import ensemble_mean_track, forecast_to_valid_time, summarize_track_errors, track_errors, track_minimum
 from .spectra import spectra_table
 from .verify import ENSEMBLE_DIM, common_grid, grid_scores, persistence, standardize, to_grid
 
@@ -93,6 +94,82 @@ def _spectra_at_last_lead(forecasts, truth, case, variable):
     return spectra_table(fields), title
 
 
+def _verify_tracks(case, truth, forecasts, out, args):
+    """Track every model (and ERA5) and score them against the best track, or against the ERA5 track
+    when no best track is configured."""
+    search = case.get("search_km", 400)
+    bt_cfg = case.get("best_track")
+    if args.best_track:
+        bt_cfg = {**(bt_cfg or {}), "path": args.best_track}
+    best = None
+    if bt_cfg:
+        try:
+            best = load_best_track(bt_cfg, Path.cwd())
+        except FileNotFoundError as e:
+            print(f"warning: best track not found ({e.filename}); verifying tracks against ERA5 instead")
+    if best is not None:
+        best.to_csv(out / "track_best.csv", index=False)
+    ref_name = "best track" if best is not None else "ERA5"
+    ws_truth = np.hypot(truth["u10m"], truth["v10m"]) if "u10m" in truth else None
+    all_summaries = []
+    for t0 in case["init_times"]:
+        t0s = pd.Timestamp(t0).strftime("%Y%m%d%H")
+        t0p = pd.Timestamp(t0)
+        if best is not None:
+            b = best[best.time >= t0p].reset_index(drop=True)
+            if b.empty:
+                continue
+            fg = (b.loc[0, "lat"], b.loc[0, "lon"])
+        else:
+            fg = tuple(case["first_guess"])
+        era5 = track_minimum(truth["msl"].sel(time=truth["time"] >= np.datetime64(t0p)), fg, search,
+                             None if ws_truth is None else ws_truth.sel(time=truth["time"] >= np.datetime64(t0p)))
+        era5.to_csv(out / f"track_era5_{t0s}.csv", index=False)
+        if era5.empty:
+            continue
+        if best is None:
+            ref_t, tracks, errs = era5, {"ERA5": era5}, {}
+        else:
+            ref_t = best[(best.time >= t0p) & (best.time <= era5.time.max())].reset_index(drop=True)
+            tracks = {"best track": ref_t, "ERA5": era5}
+            errs = {"ERA5": track_errors(era5, ref_t)}  # analysis-vs-best-track baseline
+        fg = (era5.loc[0, "lat"], era5.loc[0, "lon"]) if best is None else fg
+        for name, fc in forecasts.items():
+            if name == "persistence":
+                continue
+            f = forecast_to_valid_time(standardize(fc), t0)
+            ws = np.hypot(f["u10m"], f["v10m"]) if "u10m" in f else None
+            if ENSEMBLE_DIM in f["msl"].dims:
+                member_tracks = [
+                    track_minimum(f["msl"].isel({ENSEMBLE_DIM: k}), fg, search,
+                                  None if ws is None else ws.isel({ENSEMBLE_DIM: k})).assign(member=k)
+                    for k in range(f.sizes[ENSEMBLE_DIM])]
+                mt = pd.concat(member_tracks, ignore_index=True)
+                mt.to_csv(out / f"track_{name}_members_{t0s}.csv", index=False)
+                tr = ensemble_mean_track(mt)
+                name = f"{name} (mean)"
+            else:
+                tr = track_minimum(f["msl"], fg, search, ws)
+            tr.to_csv(out / f"track_{_safe(name)}_{t0s}.csv", index=False)
+            tracks[name] = tr
+            errs[name] = track_errors(tr, ref_t)
+        for name, e in errs.items():
+            e.to_csv(out / f"track_error_{_safe(name)}_{t0s}.csv", index=False)
+        r = case["region_obj"]
+        plots.tracks(tracks, out / f"tracks_{t0s}.png", (r.lon_min, r.lon_max, r.lat_min, r.lat_max), ref_name)
+        plots.track_error_vs_lead(errs, t0, out / f"track_error_{t0s}.png")
+        summ = summarize_track_errors(errs, t0)
+        plots.track_components(summ, out / f"track_components_{t0s}.png", ref_name)
+        all_summaries.append(summ)
+    if all_summaries:
+        summ = pd.concat(all_summaries, ignore_index=True)
+        summ.to_csv(out / "track_summary.csv", index=False)
+        by_lead = summ.groupby(["model", "lead_h"]).mean(numeric_only=True).round(1)
+        by_lead.to_csv(out / "track_summary_by_lead.csv")
+        print(f"\ntrack errors against {ref_name} (mean over initial times):")
+        print(by_lead.to_string())
+
+
 def cmd_verify(args):
     case = load_case(args.case, args.cases)
     rundir = Path(args.runs) / case["name"]
@@ -121,39 +198,7 @@ def cmd_verify(args):
     summary = {"case": case["name"], "models": list(forecasts), "variables": variables}
 
     if case.get("track"):
-        ws_truth = np.hypot(truth["u10m"], truth["v10m"]) if "u10m" in truth else None
-        ref = track_minimum(truth["msl"], tuple(case["first_guess"]), case.get("search_km", 400), ws_truth)
-        ref.to_csv(out / "track_era5.csv", index=False)
-        for t0 in case["init_times"]:
-            t0s = pd.Timestamp(t0).strftime("%Y%m%d%H")
-            ref_t = ref[ref.time >= pd.Timestamp(t0)].reset_index(drop=True)
-            if ref_t.empty:
-                continue
-            fg = (ref_t.loc[0, "lat"], ref_t.loc[0, "lon"])
-            tracks, errs = {"ERA5": ref_t}, {}
-            for name, fc in forecasts.items():
-                if name == "persistence":
-                    continue
-                f = forecast_to_valid_time(standardize(fc), t0)
-                ws = np.hypot(f["u10m"], f["v10m"]) if "u10m" in f else None
-                if ENSEMBLE_DIM in f["msl"].dims:
-                    member_tracks = [
-                        track_minimum(f["msl"].isel({ENSEMBLE_DIM: k}), fg, case.get("search_km", 400),
-                                      None if ws is None else ws.isel({ENSEMBLE_DIM: k})).assign(member=k)
-                        for k in range(f.sizes[ENSEMBLE_DIM])]
-                    mt = pd.concat(member_tracks, ignore_index=True)
-                    mt.to_csv(out / f"track_{name}_members_{t0s}.csv", index=False)
-                    tr = ensemble_mean_track(mt)
-                    name = f"{name} (mean)"
-                else:
-                    tr = track_minimum(f["msl"], fg, case.get("search_km", 400), ws)
-                tr.to_csv(out / f"track_{_safe(name)}_{t0s}.csv", index=False)
-                tracks[name] = tr
-                errs[name] = track_errors(tr, ref_t)
-                errs[name].to_csv(out / f"track_error_{_safe(name)}_{t0s}.csv", index=False)
-            r = case["region_obj"]
-            plots.tracks(tracks, out / f"tracks_{t0s}.png", (r.lon_min, r.lon_max, r.lat_min, r.lat_max))
-            plots.track_error_vs_lead(errs, t0, out / f"track_error_{t0s}.png")
+        _verify_tracks(case, truth, forecasts, out, args)
         summary["track"] = True
 
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
@@ -183,6 +228,7 @@ def main(argv=None):
     v.add_argument("--variables", nargs="+")
     v.add_argument("--persistence", action="store_true", help="add a persistence baseline")
     v.add_argument("--spectrum-variable", help="variable for the power-spectrum figure (default: first)")
+    v.add_argument("--best-track", help="IBTrACS CSV (overrides the case's best_track.path)")
     v.set_defaults(func=cmd_verify)
     args = p.parse_args(argv)
     args.func(args)
